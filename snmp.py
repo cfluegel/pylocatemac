@@ -5,10 +5,14 @@ from pprint import pprint as pp
 def snmp_walk(address=None, oid=None, community ="public"):
     # OID if Mac Address Table: '1.3.6.1.2.1.17.4.3.1.2.'
     if not oid:
-        return None
+        raise ValueError()
+    if not isinstance(oid, (str)):
+        raise ValueError()
 
     if not address:
-        return None
+        raise ValueError()
+    if not isinstance(address, (str)):
+        raise ValueError()
 
     RetTable = list()
     for (errorIndication,
@@ -26,17 +30,18 @@ def snmp_walk(address=None, oid=None, community ="public"):
 
         for varBind in varBinds:
             # print(' = '.join([x.prettyPrint() for x in varBind]))
-            _oid="." + ".".join(str(x) for x in varBind[0].getOid().asTuple())
+            _oid=".".join(str(x) for x in varBind[0].getOid().asTuple())
             # ausgabe vorbereiten
             RetTable.append( (_oid, varBind[1]._value ) )
     return RetTable
 
 def snmp_get(address=None, oid=None, community="public"):
     if not oid:
-        return None
-
+        return ValueError()
+    if not isinstance(oid, (str)):
+        raise ValueError()
     if not address:
-        return None
+        return ValueError()
 
     result = getCmd(SnmpEngine(),
                     CommunityData(community),
@@ -44,7 +49,10 @@ def snmp_get(address=None, oid=None, community="public"):
                     ContextData(),
                     ObjectType(ObjectIdentity(str(oid))))
     _result = next(result)[3][0]
-    return ( "." + ".".join(str(x) for x in _result[0].getOid().asTuple()), _result[1]._value )
+    if _result:
+        return ( ".".join(str(x) for x in _result[0].getOid().asTuple()), _result[1]._value )
+
+    return None
 
 if __name__ == "__main__":
     pp(snmp_walk("192.168.42.10", '1.3.6.1.2.1.17.4.3.1.2.', "home"))
