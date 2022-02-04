@@ -155,6 +155,6 @@ if __name__ == "__main__":
     # mac3.convertFromOID("4.212.196.33.214.31")
     # print(mac3)
 
-    homeswitch = NetworkSwitch("192.168.42.10", "home")
-    testdevice = MACAddress("04:d4:c4:21:d6:1e")
-    pp(homeswitch.isDeviceConnected(testdevice))
+    coreswitch = NetworkSwitch("192.168.42.10", "home")
+    testdevice = MACAddress("04:d4:c4:21:d6:1A")
+    pp(coreswitch.isDeviceConnected(testdevice))
