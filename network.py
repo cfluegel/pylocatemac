@@ -1,6 +1,10 @@
 from snmp import snmp_walk, snmp_get
 from enum import Enum
 
+import subprocess
+
+from pprint import pprint as pp
+
 class MACAddress():
     _address = None
     _separator = ":"
@@ -15,7 +19,7 @@ class MACAddress():
         return self._separator
 
     @separator.setter
-    def separator(self, newseparator = None):
+    def separator(self, newseparator=None):
         if not newseparator:
             raise ValueError()
 
@@ -34,7 +38,7 @@ class MACAddress():
 
     @address.setter
     def address(self, MAC=None):
-        if not isinstance(MAC,(str)):
+        if not isinstance(MAC, (str)):
             raise ValueError()
 
         if len(MAC.split(":")) != 6:
@@ -50,8 +54,8 @@ class MACAddress():
         if not isinstance(self.address, (tuple)):
             raise ValueError()
 
-        oid_formatted_mac = str(int("0x"+str(self.address[0]), base=16)) + "." + \
-            str(int("0x"+str(self.address[1]), base=16)) + "." + \
+        oid_formatted_mac = str(int("0x"+str(self.address[0]), base=16)) + \
+            "." + str(int("0x"+str(self.address[1]), base=16)) + "." + \
             str(int("0x"+str(self.address[2]), base=16)) + "." + \
             str(int("0x"+str(self.address[3]), base=16)) + "." + \
             str(int("0x"+str(self.address[4]), base=16)) + "." + \
@@ -67,11 +71,12 @@ class MACAddress():
         if not len(splittedOID) == 6:
             raise ValueError()
 
-        self.address = "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}".format(int(splittedOID[0]), \
-            int(splittedOID[1]), \
-            int(splittedOID[2]), \
-            int(splittedOID[3]), \
-            int(splittedOID[4]), \
+        self.address = "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}".format(
+            int(splittedOID[0]),
+            int(splittedOID[1]),
+            int(splittedOID[2]),
+            int(splittedOID[3]),
+            int(splittedOID[4]),
             int(splittedOID[5]))
 
     def __str__(self):
@@ -82,27 +87,65 @@ class MACAddress():
             return True
         return False
 
+
 class NSCheckResult(Enum):
-    DEVICEUNKNOWN = 0
-    DEVICEONOTHERSWITCH = 1
-    DEVICECONNECTED = 2
+    DeviceUnknown = 0
+    DeviceOnAnotherSwitch = 1
+    DeviceDirectlyConnected = 2
+    DeviceOnUnknownSwitch = 3
+
 
 class NetworkSwitch():
-    _address = None
-    _snmp_community = "public"
+    _ipaddress = None
+    _snmp_community = ""
     _snmp_base_address = '1.3.6.1.2.1.17.4.3.1.2.'
+
+    # List of known and suspected ports with another switch
+    # Format:
+    #         _connections[<port>] = NetworkSwitch()
+    #         _potential_connections = set()
+
     _connections = dict()
+    _potential_connections = set()
 
     def __init__(self, IPAddress=None, SNMPCommunity="public"):
-        self._address = IPAddress
+        self._ipaddress = IPAddress
         self._snmp_community = SNMPCommunity
 
-    def __iter__(self):
-        return self
+        if not self._isReachable():
+            raise ConnectionError("Switch is not reachable")
 
-    def __next__(self):
-        # TODO: Implement an iteration over all network switches...
-        raise StopIteration()
+    def _isReachable(self):
+        command = ["ping","-q","-c","1","-W","2",self._ipaddress]
+
+        result = subprocess.run(command,capture_output=True)
+        if result.returncode == 0:
+            return True
+        return False
+
+    @property
+    def address(self):
+        return self._ipaddress
+
+    def identifyPotentialConnection(self, output_result=False):
+        localtemp = dict()
+        for result in snmp_walk(self._ipaddress, "1.3.6.1.2.1.17.4.3.1.2.",
+                                self._snmp_community):
+            if str(result[1]) not in localtemp.keys():
+                localtemp[str(result[1])] = 1
+            else:
+                localtemp[str(result[1])] += 1
+
+        for key, value in localtemp.items():
+            if value >= 2 and key not in self._connections.keys():
+                self._potential_connections.add(key)
+
+        # This can be used during the creation of the topology file
+        if output_result:
+            print()
+            print(f"Switch with the IP {self._ipaddress} has the following potentical connections:"  )
+            pp(self._potential_connections)
+            print()
 
     def addConnection(self, port=None, nextswitch=None):
         if not isinstance(nextswitch, (NetworkSwitch)):
@@ -111,7 +154,6 @@ class NetworkSwitch():
             raise ValueError()
 
         switchport = str(port)
-
         self._connections[switchport] = nextswitch
 
     def getDevicePort(self, mac=None):
@@ -121,40 +163,51 @@ class NetworkSwitch():
             raise ValueError()
 
         checkresult = self.isDeviceConnected(mac)
-        if checkresult == NSCheckResult.DEVICECONNECTED:
-            return snmp_get(self._address, self._snmp_base_address + mac.convertToOID(), self._snmp_community)[1]
-        if checkresult == NSCheckResult.DEVICEONOTHERSWITCH:
-            result = snmp_get(self._address, self._snmp_base_address + mac.convertToOID(), self._snmp_community)
-            return self._connections[ result[1] ]
-        return None
+        if checkresult == NSCheckResult.DeviceDirectlyConnected:
+            return snmp_get(self._ipaddress,
+                            self._snmp_base_address + mac.convertToOID(),
+                            self._snmp_community)[1]
+
+        if checkresult == NSCheckResult.DeviceOnAnotherSwitch:
+            result = snmp_get(self._ipaddress,
+                              self._snmp_base_address + mac.convertToOID(),
+                              self._snmp_community)
+            return self._connections[result[1]]
+
+        # TODO: For now, just return the port of this switch as information
+        #       where the device is connected to.
+        #       This is not fully acurate
+        if checkresult == NSCheckResult.DeviceOnUnknownSwitch:
+            return snmp_get(self._ipaddress,
+                            self._snmp_base_address + mac.convertToOID(),
+                            self._snmp_community)[1]
 
     def isDeviceConnected(self, mac=None):
         if not mac:
             raise ValueError()
         if not isinstance(mac, (MACAddress)):
             raise ValueError()
-        result = snmp_get(self._address, self._snmp_base_address + mac.convertToOID(), self._snmp_community)
 
-        if result[1] and result[1] in self._connections.keys():
-            return NSCheckResult.DEVICEONOTHERSWITCH
-        if result[1] and result[1] not in self._connections.keys():
-            return NSCheckResult.DEVICECONNECTED
-        return NSCheckResult.DEVICEUNKNOWN
+        result = snmp_get(self._ipaddress,
+                          self._snmp_base_address + mac.convertToOID(),
+                          self._snmp_community)
+
+        if not result:
+            return NSCheckResult.DeviceUnknown
+
+        if not result[1]:
+            return NSCheckResult.DeviceUnknown
+
+        if str(result[1]) in self._connections.keys():
+            return NSCheckResult.DeviceOnAnotherSwitch
+
+        if str(result[1]) in self._potential_connections:
+            return NSCheckResult.DeviceOnUnknownSwitch
+
+        # TODO: Practically this is the else clause.
+        #       so it should be enough to assume that it is connected directly
+        return NSCheckResult.DeviceDirectlyConnected
+
 
 if __name__ == "__main__":
-    from pprint import pprint as pp
-
-    # mac1 = MACAddress("48:2a:e3:30:ac:64")
-    # mac2 = MACAddress("04:d4:c4:21:d6:1f")
-    # mac3 = MACAddress()
-    # print(mac1)
-    # print(mac1.convertToOID())
-    # print(mac1.address)
-
-    # print(mac2.convertToOID())
-    # mac3.convertFromOID("4.212.196.33.214.31")
-    # print(mac3)
-
-    coreswitch = NetworkSwitch("192.168.42.10", "home")
-    testdevice = MACAddress("04:d4:c4:21:d6:1A")
-    pp(coreswitch.isDeviceConnected(testdevice))
+    pass

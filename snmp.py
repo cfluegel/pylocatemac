@@ -26,7 +26,7 @@ def snmp_walk(address=None, oid=None, community ="public"):
                             lexicographicMode=False):
 
         if errorIndication:
-            raise Exception(f"Errorstatus ist {errorStatus}")
+            raise Exception(f"{errorIndication}")
 
         for varBind in varBinds:
             # print(' = '.join([x.prettyPrint() for x in varBind]))
@@ -48,12 +48,15 @@ def snmp_get(address=None, oid=None, community="public"):
                     UdpTransportTarget((str(address), 161)),
                     ContextData(),
                     ObjectType(ObjectIdentity(str(oid))))
-    _result = next(result)[3][0]
+    try:
+        _result = next(result)[3][0]
+    except IndexError:
+        _result = None
+
     if _result:
         return ( ".".join(str(x) for x in _result[0].getOid().asTuple()), _result[1]._value )
 
     return None
 
 if __name__ == "__main__":
-    pp(snmp_walk("192.168.42.10", '1.3.6.1.2.1.17.4.3.1.2.', "home"))
-    pp(snmp_get("192.168.42.10", '1.3.6.1.2.1.17.4.3.1.2.244.109.4.172.103.31', "home"))
+    pass
